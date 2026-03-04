@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>役員報酬シミュレーター v4</title>
+<style>
+  :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --green: #4ade80; --red: #f87171; --yellow: #fbbf24; --purple: #a78bfa; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; padding: 12px; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 10px; height: 100%; }
+  h1 { font-size: 1.1rem; margin-bottom: 2px; }
+  h1 span { color: var(--muted); font-size: 0.7rem; font-weight: 400; margin-left: 6px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .card h2 { font-size: 0.8rem; color: var(--accent); margin-bottom: 8px; }
+  .left { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .right { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .input-group { margin-bottom: 8px; }
+  .input-group:last-child { margin-bottom: 0; }
+  .input-group label { display: block; font-size: 0.7rem; color: var(--muted); margin-bottom: 3px; }
+  .input-group .hint { font-size: 0.6rem; color: var(--muted); margin-top: 2px; }
+  .input-group input[type="number"] { width: 100%; padding: 5px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.85rem; outline: none; }
+  .input-group input[type="number"]:focus { border-color: var(--accent); }
+  .slider-section { margin-bottom: 8px; }
+  .slider-section:last-child { margin-bottom: 0; }
+  .slider-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
+  .slider-header label { font-size: 0.7rem; color: var(--muted); }
+  .slider-value { font-size: 1rem; font-weight: 700; color: var(--accent); }
+  .slider-value.purple { color: var(--purple); }
+  .slider-value.yellow { color: var(--yellow); }
+  input[type="range"] { width: 100%; -webkit-appearance: none; height: 5px; border-radius: 3px; background: var(--border); outline: none; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); cursor: pointer; }
+  input[type="range"].purple::-webkit-slider-thumb { background: var(--purple); }
+  input[type="range"].yellow::-webkit-slider-thumb { background: var(--yellow); }
+  .toprow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .metric { background: var(--bg); border-radius: 6px; padding: 10px; text-align: center; }
+  .metric .label { font-size: 0.65rem; color: var(--muted); margin-bottom: 2px; }
+  .metric .value { font-size: 1.2rem; font-weight: 700; }
+  .metric.good .value { color: var(--green); }
+  .metric.bad .value { color: var(--red); }
+  .metric.accent .value { color: var(--accent); }
+  .stacked-bar-container { padding: 8px 0; }
+  .stacked-bar { display: flex; height: 32px; border-radius: 6px; overflow: hidden; width: 100%; }
+  .stacked-bar .seg { display: flex; align-items: center; justify-content: center; font-size: 0.6rem; font-weight: 600; color: #fff; min-width: 2px; transition: width 0.3s; }
+  .seg.s-corp { background: #3b82f6; } .seg.s-income { background: #8b5cf6; }
+  .seg.s-resident { background: #a78bfa; } .seg.s-social { background: #f59e0b; }
+  .seg.s-take { background: #22c55e; } .seg.s-expense { background: #06b6d4; }
+  .seg.s-retained { background: #0ea5e9; } .seg.s-futcost { background: #ef4444; opacity:0.6; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 0.65rem; color: var(--muted); }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .detail-box { background: var(--bg); border-radius: 6px; padding: 8px; }
+  .detail-box .label { font-size: 0.6rem; color: var(--muted); }
+  .detail-box .value { font-size: 0.85rem; font-weight: 600; }
+  .opt-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .opt-box { padding: 10px; border-radius: 8px; }
+  .opt-box.green { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.25); }
+  .opt-box.purple { background: rgba(167,139,250,0.08); border: 1px solid rgba(167,139,250,0.25); }
+  .opt-box .label { font-size: 0.7rem; margin-bottom: 2px; }
+  .opt-box.green .label { color: var(--green); }
+  .opt-box.purple .label { color: var(--purple); }
+  .opt-box .value { font-size: 0.9rem; font-weight: 700; }
+  .opt-box.green .value { color: var(--green); }
+  .opt-box.purple .value { color: var(--purple); }
+  .opt-sub { font-size: 0.65rem; color: var(--muted); margin-top: 3px; }
+  .optimal-badge { display: inline-block; background: var(--green); color: var(--bg); font-size: 0.6rem; font-weight: 700; padding: 1px 6px; border-radius: 99px; margin-left: 4px; }
+  .note { font-size: 0.55rem; color: var(--muted); line-height: 1.3; margin-top: 4px; }
+  .tip { font-size: 0.65rem; color: var(--yellow); margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="left">
+    <div>
+      <h1>💰 報酬シミュレーター<span>v4</span></h1>
+    </div>
+    <div class="card">
+      <h2>📊 法人情報</h2>
+      <div class="input-group">
+        <label>年間売上（税抜・万円）</label>
+        <input type="number" id="revenue" value="2000" step="10">
+      </div>
+      <div class="input-group">
+        <label>経費（報酬除く・万円）</label>
+        <input type="number" id="expenses" value="600" step="10">
+      </div>
+    </div>
+    <div class="card">
+      <h2>🎚️ 報酬設定</h2>
+      <div class="slider-section">
+        <div class="slider-header">
+          <label>月額報酬</label>
+          <span class="slider-value" id="compDisp">15万</span>
+        </div>
+        <input type="range" id="comp" min="5" max="200" step="1" value="30">
+      </div>
+      <div class="slider-section">
+        <div class="slider-header">
+          <label>賞与（年額）</label>
+          <span class="slider-value purple" id="bonusDisp">0万</span>
+        </div>
+        <input type="range" class="purple" id="bonus" min="0" max="1000" step="10" value="0">
+      </div>
+      <div class="slider-section">
+        <div class="slider-header">
+          <label>留保の将来取出コスト</label>
+          <span class="slider-value yellow" id="futDisp">20%</span>
+        </div>
+        <input type="range" class="yellow" id="futCost" min="0" max="50" step="5" value="20">
+        <div style="font-size:0.6rem;color:var(--muted);margin-top:2px">法人に残したお金を将来取り出す時の想定税率</div>
+      </div>
+    </div>
+    <div class="card" style="flex:1;overflow-y:auto;">
+      <h2>📝 内訳</h2>
+      <div id="breakdown" style="font-size:0.7rem;"></div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="toprow">
+      <div class="metric bad"><div class="label">税+社保（将来コスト込）</div><div class="value" id="m_tax">-</div></div>
+      <div class="metric good"><div class="label">実質使えるお金</div><div class="value" id="m_usable">-</div></div>
+      <div class="metric accent"><div class="label">実質税負担率</div><div class="value" id="m_rate">-</div></div>
+    </div>
+
+    <div class="card">
+      <h2>💰 売上の内訳</h2>
+      <div class="stacked-bar-container">
+        <div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-bottom:4px">
+          <span style="color:var(--green)">使えるお金 <span id="usablePct">-</span></span>
+          <span style="color:var(--red)">税金+社保 <span id="taxPct">-</span></span>
+        </div>
+        <div class="stacked-bar" id="stackedBar"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="detail-grid" id="details"></div>
+    </div>
+
+    <div class="opt-row">
+      <div class="opt-box green" id="optimal"></div>
+      <div class="opt-box purple" id="compare"></div>
+    </div>
+
+    <div class="card" id="extractCard">
+      <h2>🏦 内部留保の取り出しシミュレーション</h2>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <div class="input-group" style="flex:1;margin:0">
+          <label>内部留保（万円）</label>
+          <input type="number" id="retained" value="800" step="50">
+        </div>
+        <div class="input-group" style="flex:1;margin:0">
+          <label>勤続年数</label>
+          <input type="number" id="years" value="3" step="1">
+          <div class="hint">退職金の控除額に影響</div>
+        </div>
+      </div>
+      <div id="extractResult"></div>
+    </div>
+
+    <p class="note">
+      ※ 簡易計算。法人実効税率＝中小企業東京都概算。社保＝協会けんぽ東京2024ベース。賞与は事前確定届出給与前提。控除は基礎・給与所得・社保のみ。<br>
+      ※ 「留保の将来取出コスト」は法人内部留保に対する追加税コスト推定。退職金で受取なら低め(10-15%)、報酬で受取なら高め(30-40%)。<br>
+      ※ 退職金は法人の損金。配当は損金不算入（法人税削減効果なし）。報酬増額は翌期から。
+    </p>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => Math.round(n).toLocaleString();
+const fmtM = n => { const m = n/1e4; return Math.abs(m)>=100 ? Math.round(m).toLocaleString()+'万' : m.toFixed(1)+'万'; };
+
+function salDed(i) {
+  if(i<=1625000)return 550000; if(i<=1800000)return i*0.4-1e5;
+  if(i<=3600000)return i*0.3+8e4; if(i<=6600000)return i*0.2+44e4;
+  if(i<=8500000)return i*0.1+11e5; return 195e4;
+}
+function incTax(t) {
+  if(t<=0)return 0; if(t<=195e4)return t*0.05; if(t<=330e4)return t*0.10-97500;
+  if(t<=695e4)return t*0.20-427500; if(t<=900e4)return t*0.23-636e3;
+  if(t<=1800e4)return t*0.33-1536e3; if(t<=4000e4)return t*0.40-2796e3;
+  return t*0.45-4796e3;
+}
+function siCalc(mc,ab) {
+  const pm=Math.min(mc,65e4)*0.183, hm=Math.min(mc,139e4)*0.0998;
+  const mt=(pm+hm)*12;
+  const bp=Math.min(ab,150e4)*0.183, bh=Math.min(ab,573e4)*0.0998;
+  return { ee:(mt+bp+bh)/2, er:(mt+bp+bh)/2, total:mt+bp+bh };
+}
+function corpTax(i) {
+  if(i<=0)return 0; if(i<=400e4)return i*0.218;
+  if(i<=800e4)return 400e4*0.218+(i-400e4)*0.236;
+  return 400e4*0.218+400e4*0.236+(i-800e4)*0.337;
+}
+
+function sim(rv,ex,mc,bm,futPct) {
+  const R=rv*1e4, EX=ex*1e4, M=mc*1e4, AC=M*12, AB=bm*1e4, TI=AC+AB;
+  const s=siCalc(M,AB);
+  const ci=R-EX-TI-s.er;
+  const ct=corpTax(Math.max(0,ci));
+  const sd=salDed(TI), tp=Math.max(0,TI-sd-s.ee-48e4);
+  const it=incTax(tp), rt=tp*0.10, rc=it*0.021;
+  const ph=TI-s.ee-it-rc-rt;
+  const cr=Math.max(0,ci)-ct;
+  // 今期の税+社保
+  const nowTax=ct+it+rc+rt+s.total;
+  // 法人留保の将来取出コスト
+  const futCost=cr*(futPct/100);
+  // 実質トータル税コスト
+  const totalTax=nowTax+futCost;
+  const usable=R-totalTax;
+  return { R,EX,TI,AC,AB,ci,ct,sd,tp,it,rc,rt,see:s.ee,ser:s.er,st:s.total,ph,cr,nowTax,futCost,totalTax,usable };
+}
+
+function findOpt(rv,ex,futPct) {
+  let best={c:5,b:0,tax:Infinity};
+  for(let m=5;m<=200;m++) for(let b=0;b<=1000;b+=10) {
+    const r=sim(rv,ex,m,b,futPct);
+    if(r.ci<-1e4) continue;
+    if(r.totalTax<best.tax) best={c:m,b,tax:r.totalTax};
+  }
+  return best;
+}
+
+function update() {
+  const rv=parseInt($('revenue').value)||2000;
+  const ex=parseInt($('expenses').value)||600;
+  const comp=parseInt($('comp').value), bonus=parseInt($('bonus').value);
+  const futPct=parseInt($('futCost').value)||0;
+  $('compDisp').textContent=comp+'万';
+  $('bonusDisp').textContent=bonus+'万';
+  $('futDisp').textContent=futPct+'%';
+
+  const r=sim(rv,ex,comp,bonus,futPct);
+  const neg=r.ci<0;
+  const taxRate=((r.totalTax/r.R)*100).toFixed(1);
+
+  $('m_tax').textContent=fmtM(r.totalTax);
+  $('m_usable').textContent=fmtM(r.usable);
+  $('m_rate').textContent=taxRate+'%';
+
+  // 2分割: 使えるお金 vs 税+社保
+  const usablePct=((r.usable/r.R)*100).toFixed(1);
+  const taxPctVal=((r.totalTax/r.R)*100).toFixed(1);
+  $('usablePct').textContent=usablePct+'%';
+  $('taxPct').textContent=taxPctVal+'%';
+
+  // バーは大きく2色（使える/税）+ 内訳をlegendで
+  $('stackedBar').innerHTML=`
+    <div class="seg s-take" style="width:${usablePct}%">${usablePct}%</div>
+    <div class="seg s-futcost" style="width:${100-parseFloat(usablePct)}%">${taxPctVal}%</div>
+  `;
+
+  const breakdown_segs=[
+    {l:'個人手取り',v:r.ph,cl:'#22c55e'},
+    {l:'経費',v:r.EX,cl:'#06b6d4'},
+    {l:'法人留保',v:Math.max(0,r.cr),cl:'#0ea5e9'},
+    {l:'法人税',v:r.ct,cl:'#3b82f6'},
+    {l:'所得税+復興',v:r.it+r.rc,cl:'#8b5cf6'},
+    {l:'住民税',v:r.rt,cl:'#a78bfa'},
+    {l:'社保',v:r.st,cl:'#f59e0b'},
+    {l:'将来取出コスト',v:r.futCost,cl:'#ef4444'},
+  ];
+  $('legend').innerHTML=breakdown_segs.filter(s=>s.v>0).map(s=>
+    `<span class="legend-item"><span class="legend-dot" style="background:${s.cl}"></span>${s.l} ${fmtM(s.v)}(${((s.v/r.R)*100).toFixed(1)}%)</span>`
+  ).join('');
+
+  $('details').innerHTML=`
+    <div class="detail-box"><div class="label">個人手取り</div><div class="value" style="color:var(--green)">${fmtM(r.ph)}</div></div>
+    <div class="detail-box"><div class="label">法人留保</div><div class="value" style="color:${neg?'var(--red)':'var(--accent)'}">${neg?'赤字 '+fmtM(r.ci):fmtM(r.cr)}</div></div>
+    <div class="detail-box"><div class="label">経費（0%税率）</div><div class="value" style="color:#06b6d4">${fmtM(r.EX)}</div></div>
+    <div class="detail-box"><div class="label">今期の税+社保</div><div class="value" style="color:var(--red)">${fmtM(r.nowTax)}</div></div>
+    <div class="detail-box"><div class="label">将来取出コスト</div><div class="value" style="color:var(--red)">${fmtM(r.futCost)}</div></div>
+    <div class="detail-box"><div class="label">実質使えるお金</div><div class="value" style="color:var(--green)">${fmtM(r.usable)}</div></div>
+  `;
+
+  $('breakdown').innerHTML=`
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">総支給</span><span>${fmt(r.TI)}円</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">給与所得控除</span><span>▲${fmt(r.sd)}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">社保(個人)</span><span>▲${fmt(Math.round(r.see))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">課税所得</span><span>${fmt(Math.round(r.tp))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">所得税+復興</span><span style="color:var(--red)">${fmt(Math.round(r.it+r.rc))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">住民税</span><span style="color:var(--red)">${fmt(Math.round(r.rt))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border);margin-top:6px"><span style="color:var(--muted)">法人所得</span><span${neg?' style="color:var(--red)"':''}>${fmt(Math.round(r.ci))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">法人税等</span><span style="color:var(--red)">${fmt(Math.round(r.ct))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--muted)">社保(会社)</span><span style="color:var(--red)">${fmt(Math.round(r.ser))}</span></div>
+  `;
+
+  const opt=findOpt(rv,ex,futPct);
+  const optR=sim(rv,ex,opt.c,opt.b,futPct);
+  const diff=r.totalTax-optR.totalTax;
+  $('optimal').innerHTML=`
+    <div class="label">🎯 税+社保 最小化</div>
+    <div class="value">月${opt.c}万 + 賞与${opt.b}万${(comp===opt.c&&bonus===opt.b)?'<span class="optimal-badge">✓</span>':''}</div>
+    <div class="opt-sub">最小の税+社保: ${fmtM(optR.totalTax)} (税負担率 ${((optR.totalTax/(rv*1e4))*100).toFixed(1)}%)</div>
+    ${diff>1e4?`<div class="opt-sub">今のスライダー設定より <strong style="color:var(--green)">${fmtM(diff)} 安い</strong></div>`:''}
+  `;
+
+  const tcm=comp*12+bonus, nbm=Math.round(tcm/12);
+  if(bonus>0&&nbm>=5&&nbm<=200) {
+    const rNB=sim(rv,ex,nbm,0,futPct);
+    const sDiffTax=r.totalTax-rNB.totalTax; // positive = current(賞与あり) is cheaper
+    const label=sDiffTax<0?'賞与ありが有利':'月額のみが有利';
+    const saving=Math.abs(sDiffTax);
+    $('compare').innerHTML=`
+      <div class="label">📊 同額を全部月額(${nbm}万)にした場合</div>
+      <div style="font-size:0.75rem;margin-top:4px">
+        月額のみの税+社保: ${fmtM(rNB.totalTax)}<br>
+        現在の設定の税+社保: ${fmtM(r.totalTax)}<br>
+        <strong style="color:${sDiffTax<0?'var(--green)':'var(--red)'}">${label}（差額 ${fmtM(saving)}）</strong>
+      </div>
+      <div class="tip">💡 賞与は事前確定届出給与の届出必須。届出額と1円でもズレると全額損金不算入</div>
+    `;
+  } else {
+    $('compare').innerHTML=`<div class="label">📊 賞与比較</div><div class="opt-sub">賞与を設定すると比較表示</div>`;
+  }
+}
+
+// === 内部留保取り出しシミュレーション ===
+
+// 退職所得控除
+function retirementDeduction(years) {
+  if (years <= 0) return 0;
+  if (years <= 20) return years * 400000;
+  return 8000000 + (years - 20) * 700000;
+}
+
+// 退職所得の税額（分離課税・1/2課税）
+// 2022年以降、勤続5年以下の役員は1/2課税なし
+function retirementTax(amount, years) {
+  const ded = retirementDeduction(years);
+  const halfRule = years > 5; // 5年超なら1/2課税あり
+  const taxable = halfRule ? Math.max(0, amount - ded) / 2 : Math.max(0, amount - ded);
+  const it = incTax(taxable);
+  const rt = taxable * 0.10;
+  const rc = it * 0.021;
+  return { tax: it + rc + rt, taxable, ded, halfRule, rate: amount > 0 ? ((it+rc+rt)/amount*100).toFixed(1) : '0.0' };
+}
+
+// 配当所得（申告分離 or 総合課税）
+// 上場株式じゃないので総合課税 + 配当控除10%
+// ただし簡易的に：所得税の配当控除10%、住民税2.8%
+function dividendTax(amount, existingIncome) {
+  // 配当は給与所得控除なし。既存の課税所得に上乗せ
+  // 配当控除は税額控除（所得税10%、住民税2.8%）
+  const totalIncome = existingIncome + amount;
+  const itTotal = incTax(totalIncome);
+  const itBase = incTax(existingIncome);
+  const itOnDiv = itTotal - itBase;
+  const rtOnDiv = amount * 0.10; // 住民税
+  const rcOnDiv = itOnDiv * 0.021;
+  // 配当控除
+  const creditIT = amount * 0.10; // 所得税配当控除
+  const creditRT = amount * 0.028; // 住民税配当控除
+  const finalIT = Math.max(0, itOnDiv - creditIT);
+  const finalRT = Math.max(0, rtOnDiv - creditRT);
+  const tax = finalIT + rcOnDiv + finalRT;
+  // 注: 社保はかからない
+  return { tax, rate: amount > 0 ? (tax/amount*100).toFixed(1) : '0.0' };
+}
+
+// 報酬増額で取り出す場合（何年かけて上乗せ）
+function salaryExtractTax(amount, currentMonthly) {
+  // 1年で全額上乗せと仮定
+  const addMonthly = amount / 12;
+  const newMonthly = (currentMonthly * 1e4) + addMonthly;
+  const newAnnual = newMonthly * 12;
+  const oldAnnual = currentMonthly * 1e4 * 12;
+
+  const sNew = siCalc(newMonthly, 0);
+  const sOld = siCalc(currentMonthly * 1e4, 0);
+  const siDiff = sNew.total - sOld.total;
+
+  const sdNew = salDed(newAnnual), tpNew = Math.max(0, newAnnual - sdNew - sNew.ee - 48e4);
+  const sdOld = salDed(oldAnnual), tpOld = Math.max(0, oldAnnual - sdOld - sOld.ee - 48e4);
+  const itDiff = incTax(tpNew) - incTax(tpOld);
+  const rtDiff = (tpNew - tpOld) * 0.10;
+  const rcDiff = itDiff * 0.021;
+
+  const tax = itDiff + rcDiff + rtDiff + siDiff;
+  return { tax, rate: amount > 0 ? (tax/amount*100).toFixed(1) : '0.0', siDiff };
+}
+
+function updateExtract() {
+  const retained = (parseInt($('retained').value) || 0) * 1e4;
+  const years = parseInt($('years').value) || 1;
+  const comp = parseInt($('comp').value) || 15;
+
+  if (retained <= 0) {
+    $('extractResult').innerHTML = '<div style="font-size:0.75rem;color:var(--muted)">留保額を入力してください</div>';
+    return;
+  }
+
+  // 個人の既存課税所得（配当計算用）
+  const currentAnnual = comp * 1e4 * 12;
+  const sC = siCalc(comp * 1e4, 0);
+  const sdC = salDed(currentAnnual);
+  const existingTaxable = Math.max(0, currentAnnual - sdC - sC.ee - 48e4);
+
+  const ret = retirementTax(retained, years);
+  const div = dividendTax(retained, existingTaxable);
+  const sal = salaryExtractTax(retained, comp);
+
+  const methods = [
+    { name: '退職金', tax: ret.tax, rate: ret.rate, note: ret.halfRule ? `控除${fmtM(ret.ded)}+1/2課税` : `控除${fmtM(ret.ded)}（5年以下で1/2なし）`, color: '#22c55e' },
+    { name: '配当', tax: div.tax, rate: div.rate, note: '社保なし・配当控除あり・損金不算入', color: '#38bdf8' },
+    { name: '報酬増額(1年)', tax: sal.tax, rate: sal.rate, note: `社保増 ${fmtM(sal.siDiff)} 含む`, color: '#f59e0b' },
+  ].sort((a,b) => a.tax - b.tax);
+
+  const takeHome = retained;
+  $('extractResult').innerHTML = `
+    <div style="font-size:0.75rem;margin-bottom:8px;color:var(--muted)">取出額: <strong style="color:var(--text)">${fmtM(retained)}</strong></div>
+    ${methods.map((m,i) => `
+      <div style="background:var(--bg);border-radius:6px;padding:8px;margin-bottom:6px;${i===0?'border:1px solid var(--green)':''}">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-size:0.8rem;font-weight:600;${i===0?'color:var(--green)':''}">${i===0?'👑 ':''}${m.name}</span>
+          <span style="font-size:0.85rem;font-weight:700;">税コスト ${fmtM(m.tax)}（${m.rate}%）</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px">
+          <span style="font-size:0.65rem;color:var(--muted)">${m.note}</span>
+          <span style="font-size:0.75rem;color:var(--green)">手取り ${fmtM(retained - m.tax)}</span>
+        </div>
+      </div>
+    `).join('')}
+  `;
+}
+
+['revenue','expenses','comp','bonus','futCost'].forEach(id=>$(id).addEventListener('input',update));
+['retained','years','comp'].forEach(id=>$(id).addEventListener('input',updateExtract));
+update();
+updateExtract();
+</script>
+</body>
+</html>
