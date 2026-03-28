@@ -21,6 +21,8 @@
   .input-group .hint { font-size: 0.6rem; color: var(--muted); margin-top: 2px; }
   .input-group input[type="number"] { width: 100%; padding: 5px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.85rem; outline: none; }
   .input-group input[type="number"]:focus { border-color: var(--accent); }
+  .input-group select { width: 100%; padding: 5px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.8rem; outline: none; }
+  .input-group select:focus { border-color: var(--accent); }
   .slider-section { margin-bottom: 8px; }
   .slider-section:last-child { margin-bottom: 0; }
   .slider-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
@@ -78,12 +80,28 @@
     <div class="card">
       <h2>📊 法人情報</h2>
       <div class="input-group">
-        <label>年間売上（税抜・万円）</label>
+        <label id="revenueLabel">年間売上（税抜・万円）</label>
         <input type="number" id="revenue" value="2000" step="10">
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.65rem;color:var(--muted);margin-top:3px;cursor:pointer">
+          <input type="checkbox" id="taxInclusive" style="margin:0"> 税込で入力
+        </label>
       </div>
       <div class="input-group">
         <label>経費（報酬除く・万円）</label>
         <input type="number" id="expenses" value="600" step="10">
+      </div>
+      <div class="input-group">
+        <label>消費税</label>
+        <select id="deemedRate">
+          <option value="-1">免税事業者</option>
+          <option value="90">第一種（卸売業）90%</option>
+          <option value="80">第二種（小売業）80%</option>
+          <option value="70">第三種（製造業等）70%</option>
+          <option value="60">第四種（その他）60%</option>
+          <option value="50" selected>第五種（サービス業等）50%</option>
+          <option value="40">第六種（不動産業）40%</option>
+        </select>
+        <div style="font-size:0.6rem;color:var(--muted);margin-top:2px">簡易課税のみなし仕入率</div>
       </div>
     </div>
     <div class="card">
@@ -164,7 +182,8 @@
     <p class="note">
       ※ 簡易計算。法人実効税率＝中小企業東京都概算。社保＝協会けんぽ東京2024ベース。賞与は事前確定届出給与前提。控除は基礎・給与所得・社保のみ。<br>
       ※ 「留保の将来取出コスト」は法人内部留保に対する追加税コスト推定。退職金で受取なら低め(10-15%)、報酬で受取なら高め(30-40%)。<br>
-      ※ 退職金は法人の損金。配当は損金不算入（法人税削減効果なし）。報酬増額は翌期から。
+      ※ 退職金は法人の損金。配当は損金不算入（法人税削減効果なし）。報酬増額は翌期から。<br>
+      ※ 消費税は簡易課税制度（みなし仕入率��で計算。課税売上5,000万円以下が適用条件。本則課税には非対応。
     </p>
   </div>
 </div>
@@ -197,8 +216,10 @@ function corpTax(i) {
   return 400e4*0.218+400e4*0.236+(i-800e4)*0.337;
 }
 
-function sim(rv,ex,mc,bm,futPct) {
-  const R=rv*1e4, EX=ex*1e4, M=mc*1e4, AC=M*12, AB=bm*1e4, TI=AC+AB;
+function sim(rv,ex,mc,bm,futPct,deemedRate,taxInclusive) {
+  const Rinput=rv*1e4;
+  const R=taxInclusive ? Math.round(Rinput/1.1) : Rinput;
+  const EX=ex*1e4, M=mc*1e4, AC=M*12, AB=bm*1e4, TI=AC+AB;
   const s=siCalc(M,AB);
   const ci=R-EX-TI-s.er;
   const ct=corpTax(Math.max(0,ci));
@@ -206,22 +227,38 @@ function sim(rv,ex,mc,bm,futPct) {
   const it=incTax(tp), rt=tp*0.10, rc=it*0.021;
   const ph=TI-s.ee-it-rc-rt;
   const cr=Math.max(0,ci)-ct;
+  // 簡易課税の消費税
+  const consumptionTax = (deemedRate!=null && deemedRate>=0) ? R*0.10*(1-deemedRate/100) : 0;
   // 今期の税+社保
-  const nowTax=ct+it+rc+rt+s.total;
+  const nowTax=ct+it+rc+rt+s.total+consumptionTax;
   // 法人留保の将来取出コスト
   const futCost=cr*(futPct/100);
   // 実質トータル税コスト
   const totalTax=nowTax+futCost;
   const usable=R-totalTax;
-  return { R,EX,TI,AC,AB,ci,ct,sd,tp,it,rc,rt,see:s.ee,ser:s.er,st:s.total,ph,cr,nowTax,futCost,totalTax,usable };
+  // 実効税率
+  const corpEffRate = ci > 0 ? ct / ci : 0;
+  const personalTax = it + rc + rt + s.ee;
+  const personalEffRate = TI > 0 ? personalTax / TI : 0;
+  const totalEffRate = R > 0 ? totalTax / R : 0;
+  return { R,Rinput,EX,TI,AC,AB,ci,ct,sd,tp,it,rc,rt,see:s.ee,ser:s.er,st:s.total,ph,cr,nowTax,futCost,totalTax,usable,corpEffRate,personalTax,personalEffRate,totalEffRate,consumptionTax };
 }
 
-function findOpt(rv,ex,futPct) {
+function findOpt(rv,ex,futPct,deemedRate,taxInclusive) {
   let best={c:5,b:0,tax:Infinity};
   for(let m=5;m<=200;m++) for(let b=0;b<=1000;b+=10) {
-    const r=sim(rv,ex,m,b,futPct);
+    const r=sim(rv,ex,m,b,futPct,deemedRate,taxInclusive);
     if(r.ci<-1e4) continue;
     if(r.totalTax<best.tax) best={c:m,b,tax:r.totalTax};
+  }
+  return best;
+}
+function findOptBonus(rv,ex,mc,futPct,deemedRate,taxInclusive) {
+  let best={b:0,tax:Infinity};
+  for(let b=0;b<=1000;b+=10) {
+    const r=sim(rv,ex,mc,b,futPct,deemedRate,taxInclusive);
+    if(r.ci<-1e4) continue;
+    if(r.totalTax<best.tax) best={b,tax:r.totalTax};
   }
   return best;
 }
@@ -231,11 +268,13 @@ function update() {
   const ex=parseInt($('expenses').value)||600;
   const comp=parseInt($('comp').value), bonus=parseInt($('bonus').value);
   const futPct=parseInt($('futCost').value)||0;
+  const deemedRate=parseInt($('deemedRate').value);
+  const taxInclusive=$('taxInclusive').checked;
   $('compDisp').textContent=comp+'万';
   $('bonusDisp').textContent=bonus+'万';
   $('futDisp').textContent=futPct+'%';
 
-  const r=sim(rv,ex,comp,bonus,futPct);
+  const r=sim(rv,ex,comp,bonus,futPct,deemedRate,taxInclusive);
   const neg=r.ci<0;
   const taxRate=((r.totalTax/r.R)*100).toFixed(1);
 
@@ -263,6 +302,7 @@ function update() {
     {l:'所得税+復興',v:r.it+r.rc,cl:'#8b5cf6'},
     {l:'住民税',v:r.rt,cl:'#a78bfa'},
     {l:'社保',v:r.st,cl:'#f59e0b'},
+    {l:'消費税',v:r.consumptionTax,cl:'#fb923c'},
     {l:'将来取出コスト',v:r.futCost,cl:'#ef4444'},
   ];
   $('legend').innerHTML=breakdown_segs.filter(s=>s.v>0).map(s=>
@@ -287,22 +327,37 @@ function update() {
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">住民税</span><span style="color:var(--red)">${fmt(Math.round(r.rt))}</span></div>
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border);margin-top:6px"><span style="color:var(--muted)">法人所得</span><span${neg?' style="color:var(--red)"':''}>${fmt(Math.round(r.ci))}</span></div>
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">法人税等</span><span style="color:var(--red)">${fmt(Math.round(r.ct))}</span></div>
-    <div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--muted)">社保(会社)</span><span style="color:var(--red)">${fmt(Math.round(r.ser))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">社保(会社)</span><span style="color:var(--red)">${fmt(Math.round(r.ser))}</span></div>
+    ${r.consumptionTax>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">消費税(簡易課税)</span><span style="color:var(--red)">${fmt(Math.round(r.consumptionTax))}</span></div>`:''}
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border);margin-top:6px"><span style="color:var(--accent)">個人実効税率</span><span style="color:var(--accent)">${(r.personalEffRate*100).toFixed(1)}%</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--accent)">法人実効税率</span><span style="color:var(--accent)">${(r.corpEffRate*100).toFixed(1)}%</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--yellow);font-weight:700">トータル税負担率</span><span style="color:var(--yellow);font-weight:700">${(r.totalEffRate*100).toFixed(1)}%</span></div>
   `;
 
-  const opt=findOpt(rv,ex,futPct);
-  const optR=sim(rv,ex,opt.c,opt.b,futPct);
+  const opt=findOpt(rv,ex,futPct,deemedRate,taxInclusive);
+  const optR=sim(rv,ex,opt.c,opt.b,futPct,deemedRate,taxInclusive);
   const diff=r.totalTax-optR.totalTax;
+
+  const optB=findOptBonus(rv,ex,comp,futPct,deemedRate,taxInclusive);
+  const optBR=sim(rv,ex,comp,optB.b,futPct,deemedRate,taxInclusive);
+  const diffB=r.totalTax-optBR.totalTax;
+
   $('optimal').innerHTML=`
-    <div class="label">🎯 税+社保 最小化</div>
+    <div class="label">🎯 税+社保 最小化（全体最適）</div>
     <div class="value">月${opt.c}万 + 賞与${opt.b}万${(comp===opt.c&&bonus===opt.b)?'<span class="optimal-badge">✓</span>':''}</div>
-    <div class="opt-sub">最小の税+社保: ${fmtM(optR.totalTax)} (税負担率 ${((optR.totalTax/(rv*1e4))*100).toFixed(1)}%)</div>
+    <div class="opt-sub">最小の税+社保: ${fmtM(optR.totalTax)} (税負担率 ${((optR.totalTax/r.R)*100).toFixed(1)}%)</div>
     ${diff>1e4?`<div class="opt-sub">今のスライダー設定より <strong style="color:var(--green)">${fmtM(diff)} 安い</strong></div>`:''}
+    <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px">
+      <div class="label">🎯 月額${comp}万固定での最適賞与</div>
+      <div class="value">賞与${optB.b}万${(bonus===optB.b)?'<span class="optimal-badge">✓</span>':''}</div>
+      <div class="opt-sub">税+社保: ${fmtM(optBR.totalTax)} (税負担率 ${((optBR.totalTax/r.R)*100).toFixed(1)}%)</div>
+      ${diffB>1e4?`<div class="opt-sub">今のスライダー設定より <strong style="color:var(--green)">${fmtM(diffB)} 安い</strong></div>`:''}
+    </div>
   `;
 
   const tcm=comp*12+bonus, nbm=Math.round(tcm/12);
   if(bonus>0&&nbm>=5&&nbm<=200) {
-    const rNB=sim(rv,ex,nbm,0,futPct);
+    const rNB=sim(rv,ex,nbm,0,futPct,deemedRate,taxInclusive);
     const sDiffTax=r.totalTax-rNB.totalTax; // positive = current(賞与あり) is cheaper
     const label=sDiffTax<0?'賞与ありが有利':'月額のみが有利';
     const saving=Math.abs(sDiffTax);
@@ -430,6 +485,11 @@ function updateExtract() {
 }
 
 ['revenue','expenses','comp','bonus','futCost'].forEach(id=>$(id).addEventListener('input',update));
+$('deemedRate').addEventListener('change',update);
+$('taxInclusive').addEventListener('change',()=>{
+  $('revenueLabel').textContent=$('taxInclusive').checked?'年間売上（税込・万円）':'年間売上（税抜・万円）';
+  update();
+});
 ['retained','years','comp'].forEach(id=>$(id).addEventListener('input',updateExtract));
 update();
 updateExtract();
