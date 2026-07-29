@@ -62,4 +62,99 @@ function findOptBonus(rv,ex,mc,futPct,deemedRate,taxInclusive) {
   return best;
 }
 
-export { salDed, incTax, siCalc, corpTax, sim, findOptBonus };
+function findOpt(rv,ex,futPct,deemedRate,taxInclusive) {
+  let best={c:5,b:0,tax:Infinity};
+  for(let m=5;m<=200;m++) for(let b=0;b<=1000;b+=10) {
+    const r=sim(rv,ex,m,b,futPct,deemedRate,taxInclusive);
+    if(r.ci<-1e4) continue;
+    if(r.totalTax<best.tax) best={c:m,b,tax:r.totalTax};
+  }
+  return best;
+}
+
+// ============================================================
+// 雇用形態の比較（同じ会社コストで）
+//   会社が1人を雇うのにかかる年間コスト C（円）を固定して、
+//   正社員 / 個人事業主 / マイクロ法人 の「実質使えるお金」を比較する。
+//   税負担の違い（所得課税・社会保険・法人税）にフォーカスするため、
+//   消費税は3形態とも除外する。マイクロ法人の内部留保は
+//   将来取出コスト（futPct）適用後で評価する。
+// ============================================================
+
+// 国民年金（定額・2024: 16,980円/月）
+const NENKIN_ANNUAL = 203760;
+
+// 国民健康保険（簡易・東京23区2024概算・介護分なし）
+//   所得割 10.4% + 均等割 64,100円、賦課限度額 89万円
+//   totalIncome = 総所得金額（青色控除後・基礎控除前）
+function kokuho(totalIncome) {
+  const base = Math.max(0, totalIncome - 430000); // 国保の基礎控除43万
+  return Math.min(base * 0.104 + 64100, 890000);
+}
+
+// 会社コスト（額面 + 会社負担社保）から額面年収を逆算
+function grossFromCost(cost) {
+  let lo = 0, hi = cost;
+  for (let i = 0; i < 80; i++) {
+    const ag = (lo + hi) / 2;
+    const er = siCalc(ag / 12, 0).er;
+    if (ag + er > cost) hi = ag; else lo = ag;
+  }
+  return (lo + hi) / 2;
+}
+
+// 正社員: 会社コスト C(万) = 額面 + 会社負担社保
+function simEmployee(cWan) {
+  const C = cWan * 1e4;
+  const gross = grossFromCost(C);
+  const s = siCalc(gross / 12, 0);
+  const sd = salDed(gross);
+  const tp = Math.max(0, gross - sd - s.ee - 48e4);
+  const it = incTax(tp), rt = tp * 0.10, rc = it * 0.021;
+  const burden = it + rc + rt + s.total; // 所得課税 + 社保(労使合計)
+  const usable = C - burden;
+  return { type: 'employee', C, gross, ee: s.ee, er: s.er, si: s.total, sd, tp, it, rc, rt, burden, usable, effRate: burden / C };
+}
+
+// 個人事業主: 会社コスト C(万) を全額 業務委託費として受取
+function simSoleProprietor(cWan, exWan) {
+  const C = cWan * 1e4;
+  const EX = (exWan || 0) * 1e4;
+  const bizIncome = Math.max(0, C - EX);              // 事業所得（青色控除前）
+  const aoiro = 650000;                               // 青色申告特別控除
+  const afterAoiro = Math.max(0, bizIncome - aoiro);  // 総所得金額（国保算定ベース）
+  const nenkin = NENKIN_ANNUAL;
+  const kokuhoIns = kokuho(afterAoiro);
+  const bizTax = Math.max(0, bizIncome - 2900000) * 0.05; // 個人事業税（青色控除なし・第一種5%）
+  const socialDed = nenkin + kokuhoIns;               // 社会保険料控除（全額控除）
+  const tp = Math.max(0, afterAoiro - socialDed - 48e4);
+  const it = incTax(tp), rt = tp * 0.10, rc = it * 0.021;
+  const burden = it + rc + rt + nenkin + kokuhoIns + bizTax;
+  const usable = C - EX - burden;
+  return { type: 'sole', C, EX, bizIncome, aoiro, nenkin, kokuho: kokuhoIns, bizTax, tp, it, rc, rt, burden, usable, effRate: burden / C };
+}
+
+// マイクロ法人: 会社コスト C(万) を全額 売上として受取、税+社保最小の役員報酬を自動選択
+function simMicroCorp(cWan, exWan, futPct) {
+  const opt = findOpt(cWan, exWan, futPct, -1, false); // 消費税は除外(deemedRate=-1)
+  const r = sim(cWan, exWan, opt.c, opt.b, futPct, -1, false);
+  const C = r.R;
+  const EX = (exWan || 0) * 1e4;
+  const burden = r.ct + r.it + r.rc + r.rt + r.st + r.futCost;
+  const usable = C - EX - burden;
+  return { type: 'micro', C, EX, optComp: opt.c, optBonus: opt.b, ct: r.ct, st: r.st, it: r.it, rc: r.rc, rt: r.rt, cr: r.cr, futCost: r.futCost, ph: r.ph, burden, usable, effRate: burden / C };
+}
+
+// 3形態を同時に計算して返す
+function compareByCost(cWan, exWan, futPct) {
+  return {
+    emp: simEmployee(cWan),
+    sole: simSoleProprietor(cWan, exWan),
+    micro: simMicroCorp(cWan, exWan, futPct),
+  };
+}
+
+export {
+  salDed, incTax, siCalc, corpTax, sim, findOptBonus, findOpt,
+  kokuho, grossFromCost, simEmployee, simSoleProprietor, simMicroCorp, compareByCost,
+};

@@ -69,6 +69,18 @@
   .optimal-badge { display: inline-block; background: var(--green); color: var(--bg); font-size: 0.6rem; font-weight: 700; padding: 1px 6px; border-radius: 99px; margin-left: 4px; }
   .note { font-size: 0.55rem; color: var(--muted); line-height: 1.3; margin-top: 4px; }
   .tip { font-size: 0.65rem; color: var(--yellow); margin-top: 4px; }
+  .cmp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .cmp-col { background: var(--bg); border-radius: 8px; padding: 10px; border: 1px solid var(--border); }
+  .cmp-col.best { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+  .cmp-col .cmp-name { font-size: 0.72rem; color: var(--muted); margin-bottom: 3px; }
+  .cmp-col.best .cmp-name { color: var(--green); }
+  .cmp-col .cmp-usable { font-size: 1.15rem; font-weight: 700; color: var(--green); }
+  .cmp-col .cmp-rate { font-size: 0.62rem; color: var(--muted); margin-bottom: 6px; }
+  .cmp-col .cmp-note { font-size: 0.58rem; color: var(--accent); margin-bottom: 6px; }
+  .cmp-row { display: flex; justify-content: space-between; font-size: 0.62rem; padding: 1px 0; }
+  .cmp-row span:first-child { color: var(--muted); }
+  .cmp-row span:last-child { color: var(--red); }
+  .cmp-badge { display: inline-block; background: var(--green); color: var(--bg); font-size: 0.55rem; font-weight: 700; padding: 1px 5px; border-radius: 99px; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -161,6 +173,28 @@
     <div class="opt-row">
       <div class="opt-box green" id="optimal"></div>
       <div class="opt-box purple" id="compare"></div>
+    </div>
+
+    <div class="card" id="compareCard">
+      <h2>⚖️ 雇用形態の比較（同じ会社コストで）</h2>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <div class="input-group" style="flex:1;margin:0">
+          <label>会社の年間総コスト（万円）</label>
+          <input type="number" id="companyCost" value="800" step="10">
+          <div class="hint">正社員=額面+会社負担社保 / 委託=支払報酬総額</div>
+        </div>
+        <div class="input-group" style="flex:1;margin:0">
+          <label>個人/法人の経費（万円）</label>
+          <input type="number" id="personExpenses" value="0" step="10">
+          <div class="hint">個人事業主・法人のみ（正社員は対象外）</div>
+        </div>
+      </div>
+      <div class="cmp-grid" id="cmpResult"></div>
+      <p class="note">
+        ※ 所得課税・社会保険・法人税の違いにフォーカス。消費税は3形態とも除外。<br>
+        ※ マイクロ法人は税+社保が最小になる役員報酬を自動選択。内部留保は将来取出コスト（左スライダー）適用後で評価。<br>
+        ※ 国民年金＝2024定額。国保＝東京23区2024概算（介護分なし）。個人事業税＝第一種5%・事業主控除290万。
+      </p>
     </div>
 
     <div class="card" id="extractCard">
@@ -261,6 +295,54 @@ function findOptBonus(rv,ex,mc,futPct,deemedRate,taxInclusive) {
     if(r.totalTax<best.tax) best={b,tax:r.totalTax};
   }
   return best;
+}
+
+// === 雇用形態の比較（同じ会社コストで） ===
+const NENKIN_ANNUAL = 203760; // 国民年金 定額(2024)
+function kokuho(totalIncome) { // 国保 簡易(東京23区2024概算・介護分なし)
+  const base = Math.max(0, totalIncome - 430000);
+  return Math.min(base * 0.104 + 64100, 890000);
+}
+function grossFromCost(cost) { // 会社コスト(額面+会社負担社保)から額面を逆算
+  let lo = 0, hi = cost;
+  for (let i = 0; i < 80; i++) {
+    const ag = (lo + hi) / 2;
+    const er = siCalc(ag / 12, 0).er;
+    if (ag + er > cost) hi = ag; else lo = ag;
+  }
+  return (lo + hi) / 2;
+}
+function simEmployee(cWan) { // 正社員
+  const C = cWan * 1e4;
+  const gross = grossFromCost(C);
+  const s = siCalc(gross / 12, 0);
+  const sd = salDed(gross);
+  const tp = Math.max(0, gross - sd - s.ee - 48e4);
+  const it = incTax(tp), rt = tp * 0.10, rc = it * 0.021;
+  const burden = it + rc + rt + s.total;
+  return { type:'employee', C, gross, ee:s.ee, er:s.er, si:s.total, sd, tp, it, rc, rt, burden, usable:C-burden, effRate:burden/C };
+}
+function simSoleProprietor(cWan, exWan) { // 個人事業主
+  const C = cWan * 1e4, EX = (exWan || 0) * 1e4;
+  const bizIncome = Math.max(0, C - EX);
+  const aoiro = 650000;
+  const afterAoiro = Math.max(0, bizIncome - aoiro);
+  const nenkin = NENKIN_ANNUAL, kokuhoIns = kokuho(afterAoiro);
+  const bizTax = Math.max(0, bizIncome - 2900000) * 0.05;
+  const tp = Math.max(0, afterAoiro - (nenkin + kokuhoIns) - 48e4);
+  const it = incTax(tp), rt = tp * 0.10, rc = it * 0.021;
+  const burden = it + rc + rt + nenkin + kokuhoIns + bizTax;
+  return { type:'sole', C, EX, bizIncome, aoiro, nenkin, kokuho:kokuhoIns, bizTax, tp, it, rc, rt, burden, usable:C-EX-burden, effRate:burden/C };
+}
+function simMicroCorp(cWan, exWan, futPct) { // マイクロ法人
+  const opt = findOpt(cWan, exWan, futPct, -1, false);
+  const r = sim(cWan, exWan, opt.c, opt.b, futPct, -1, false);
+  const C = r.R, EX = (exWan || 0) * 1e4;
+  const burden = r.ct + r.it + r.rc + r.rt + r.st + r.futCost;
+  return { type:'micro', C, EX, optComp:opt.c, optBonus:opt.b, ct:r.ct, st:r.st, it:r.it, rc:r.rc, rt:r.rt, cr:r.cr, futCost:r.futCost, ph:r.ph, burden, usable:C-EX-burden, effRate:burden/C };
+}
+function compareByCost(cWan, exWan, futPct) {
+  return { emp:simEmployee(cWan), sole:simSoleProprietor(cWan, exWan), micro:simMicroCorp(cWan, exWan, futPct) };
 }
 
 function update() {
@@ -484,6 +566,48 @@ function updateExtract() {
   `;
 }
 
+// === 雇用形態の比較 描画 ===
+function updateCompare() {
+  const C = parseInt($('companyCost').value) || 0;
+  const ex = parseInt($('personExpenses').value) || 0;
+  const futPct = parseInt($('futCost').value) || 0;
+  if (C <= 0) {
+    $('cmpResult').innerHTML = '<div style="grid-column:1/-1;font-size:0.7rem;color:var(--muted)">会社の総コストを入力してください</div>';
+    return;
+  }
+  const c = compareByCost(C, ex, futPct);
+  const cols = [
+    { name:'正社員', r:c.emp, note:`額面 ${fmtM(c.emp.gross)}`, rows:[
+      ['社保(労使合計)', c.emp.si],
+      ['所得税+住民税', c.emp.it + c.emp.rc + c.emp.rt],
+    ]},
+    { name:'個人事業主', r:c.sole, note:'青色65万控除・国保加入', rows:[
+      ['国民年金', c.sole.nenkin],
+      ['国民健康保険', c.sole.kokuho],
+      ['所得税+住民税', c.sole.it + c.sole.rc + c.sole.rt],
+      ['個人事業税', c.sole.bizTax],
+    ]},
+    { name:'マイクロ法人', r:c.micro, note:`月${c.micro.optComp}万+賞与${c.micro.optBonus}万`, rows:[
+      ['社保', c.micro.st],
+      ['法人税', c.micro.ct],
+      ['所得税+住民税', c.micro.it + c.micro.rc + c.micro.rt],
+      ['将来取出コスト', c.micro.futCost],
+    ]},
+  ];
+  const best = cols.reduce((a,b) => b.r.usable > a.r.usable ? b : a);
+  $('cmpResult').innerHTML = cols.map(col => `
+    <div class="cmp-col${col === best ? ' best' : ''}">
+      <div class="cmp-name">${col.name}${col === best ? '<span class="cmp-badge">👑 有利</span>' : ''}</div>
+      <div class="cmp-usable">${fmtM(col.r.usable)}</div>
+      <div class="cmp-rate">実質使えるお金・負担率 ${(col.r.effRate * 100).toFixed(1)}%</div>
+      <div class="cmp-note">${col.note}</div>
+      ${col.rows.filter(([, v]) => v > 0).map(([l, v]) => `<div class="cmp-row"><span>${l}</span><span>▲${fmtM(v)}</span></div>`).join('')}
+    </div>
+  `).join('');
+}
+
+['companyCost','personExpenses'].forEach(id=>$(id).addEventListener('input',updateCompare));
+
 ['revenue','expenses','comp','bonus','futCost'].forEach(id=>$(id).addEventListener('input',update));
 $('deemedRate').addEventListener('change',update);
 $('taxInclusive').addEventListener('change',()=>{
@@ -491,8 +615,10 @@ $('taxInclusive').addEventListener('change',()=>{
   update();
 });
 ['retained','years','comp'].forEach(id=>$(id).addEventListener('input',updateExtract));
+$('futCost').addEventListener('input',updateCompare);
 update();
 updateExtract();
+updateCompare();
 </script>
 </body>
 </html>
