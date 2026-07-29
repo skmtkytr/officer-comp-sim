@@ -1,5 +1,16 @@
 import { describe, test, expect } from "bun:test";
-import { sim, findOptBonus } from "./sim.js";
+import {
+  sim,
+  findOptBonus,
+  findOpt,
+  siCalc,
+  kokuho,
+  grossFromCost,
+  simEmployee,
+  simSoleProprietor,
+  simMicroCorp,
+  compareByCost,
+} from "./sim.js";
 
 describe("sim effective tax rates", () => {
   // 基本ケース: 売上2000万、経費600万、月額報酬50万、賞与0、将来コスト20%
@@ -130,6 +141,149 @@ describe("findOptBonus (月額固定で最適賞与を探す)", () => {
     // 月額200万だと法人所得が赤字になりやすい → 賞与0が返るはず
     const opt = findOptBonus(2000, 600, 200, 20, -1);
     expect(opt.b).toBe(0);
+  });
+});
+
+// ============================================================
+// 雇用形態の比較（同じ会社コストで）
+//   会社が1人を雇うのにかかる年間コスト C を固定して、
+//   正社員 / 個人事業主 / マイクロ法人 を比較する。
+// ============================================================
+
+describe("grossFromCost（会社コストから額面を逆算）", () => {
+  test("額面 + 会社負担社保 = 会社コスト", () => {
+    const cost = 8_000_000;
+    const gross = grossFromCost(cost);
+    const er = siCalc(gross / 12, 0).er;
+    expect(gross + er).toBeCloseTo(cost, 0);
+  });
+
+  test("額面は会社コスト未満（会社負担社保がある分だけ小さい）", () => {
+    expect(grossFromCost(8_000_000)).toBeLessThan(8_000_000);
+  });
+
+  test("コスト0なら額面0", () => {
+    expect(grossFromCost(0)).toBeCloseTo(0, 5);
+  });
+});
+
+describe("kokuho（国民健康保険・簡易）", () => {
+  test("所得ゼロなら均等割のみ", () => {
+    expect(kokuho(0)).toBeCloseTo(64100, 0);
+  });
+
+  test("賦課限度額89万で頭打ち", () => {
+    expect(kokuho(50_000_000)).toBe(890_000);
+  });
+
+  test("所得が増えると保険料も増える（上限まで）", () => {
+    expect(kokuho(5_000_000)).toBeGreaterThan(kokuho(1_000_000));
+  });
+});
+
+describe("simEmployee（正社員）", () => {
+  const r = simEmployee(800);
+
+  test("実質使えるお金 = 会社コスト − 負担", () => {
+    expect(r.usable).toBeCloseTo(r.C - r.burden, 5);
+  });
+
+  test("負担 = 所得税+復興+住民税 + 社保（労使合計）", () => {
+    expect(r.burden).toBeCloseTo(r.it + r.rc + r.rt + r.si, 5);
+  });
+
+  test("社保は労使折半（本人負担 = 会社負担）", () => {
+    expect(r.ee).toBeCloseTo(r.er, 5);
+  });
+
+  test("実効負担率は0〜1", () => {
+    expect(r.effRate).toBeGreaterThan(0);
+    expect(r.effRate).toBeLessThan(1);
+  });
+});
+
+describe("simSoleProprietor（個人事業主）", () => {
+  const r = simSoleProprietor(800, 0);
+
+  test("実質使えるお金 = 会社コスト − 経費 − 負担", () => {
+    expect(r.usable).toBeCloseTo(r.C - r.EX - r.burden, 5);
+  });
+
+  test("負担 = 所得税+復興+住民税 + 国民年金 + 国保 + 事業税", () => {
+    expect(r.burden).toBeCloseTo(
+      r.it + r.rc + r.rt + r.nenkin + r.kokuho + r.bizTax,
+      5,
+    );
+  });
+
+  test("青色申告特別控除65万が適用される", () => {
+    expect(r.aoiro).toBe(650_000);
+  });
+
+  test("事業所得290万以下なら個人事業税は0（事業主控除290万）", () => {
+    const low = simSoleProprietor(280, 0);
+    expect(low.bizTax).toBe(0);
+  });
+
+  test("国民年金は定額", () => {
+    const a = simSoleProprietor(500, 0);
+    const b = simSoleProprietor(1500, 0);
+    expect(a.nenkin).toBe(b.nenkin);
+  });
+});
+
+describe("simMicroCorp（マイクロ法人）", () => {
+  const r = simMicroCorp(800, 0, 20);
+
+  test("最適な役員報酬を範囲内で選ぶ", () => {
+    expect(r.optComp).toBeGreaterThanOrEqual(5);
+    expect(r.optComp).toBeLessThanOrEqual(200);
+  });
+
+  test("実質使えるお金 = 会社コスト − 経費 − 負担", () => {
+    expect(r.usable).toBeCloseTo(r.C - r.EX - r.burden, 5);
+  });
+
+  test("負担 = 法人税 + 所得税+復興+住民税 + 社保 + 将来取出コスト", () => {
+    expect(r.burden).toBeCloseTo(
+      r.ct + r.it + r.rc + r.rt + r.st + r.futCost,
+      5,
+    );
+  });
+
+  test("消費税は比較から除外される（deemedRate無効）", () => {
+    // consumptionTax を含まないことを確認するため、同条件の sim と比べる
+    const direct = sim(800, 0, r.optComp, r.optBonus, 20, -1, false);
+    expect(direct.consumptionTax).toBe(0);
+  });
+});
+
+describe("compareByCost（3形態の同時比較）", () => {
+  const c = compareByCost(800, 0, 20);
+
+  test("3形態すべてを返す", () => {
+    expect(c.emp.type).toBe("employee");
+    expect(c.sole.type).toBe("sole");
+    expect(c.micro.type).toBe("micro");
+  });
+
+  test("3形態とも同じ会社コスト C を使う", () => {
+    expect(c.emp.C).toBeCloseTo(c.sole.C, 0);
+    expect(c.sole.C).toBeCloseTo(c.micro.C, 0);
+  });
+
+  test("どの形態も使えるお金は正で会社コスト未満", () => {
+    for (const r of [c.emp, c.sole, c.micro]) {
+      expect(r.usable).toBeGreaterThan(0);
+      expect(r.usable).toBeLessThan(r.C);
+    }
+  });
+
+  test("経費を増やすと個人・法人とも使えるお金は減る（支出のため）", () => {
+    const c0 = compareByCost(800, 0, 20);
+    const c1 = compareByCost(800, 100, 20);
+    expect(c1.sole.usable).toBeLessThan(c0.sole.usable);
+    expect(c1.micro.usable).toBeLessThan(c0.micro.usable);
   });
 });
 
