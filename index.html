@@ -115,6 +115,32 @@
         </select>
         <div style="font-size:0.6rem;color:var(--muted);margin-top:2px">簡易課税のみなし仕入率</div>
       </div>
+      <div class="input-group">
+        <label>法人事業税（所得割）</label>
+        <select id="bizTaxMode">
+          <option value="reduced" selected>軽減税率（3.5% / 5.3% / 7.0%）</option>
+          <option value="flat">軽減税率不適用（7.0%一律）</option>
+        </select>
+        <div class="hint">不適用は原則「資本金1,000万以上かつ3都道府県以上に事務所」の法人</div>
+      </div>
+      <div class="input-group">
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="age40" style="margin:0"> 役員が40〜64歳（介護保険料あり）</label>
+      </div>
+      <div class="input-group">
+        <label>前期の課税所得（万円）</label>
+        <input type="number" id="prevIncome" value="0" step="10">
+        <div class="hint">前期申告書 別表一「所得金額」。中間納付・繰戻し還付の計算に使用</div>
+      </div>
+      <div class="input-group">
+        <label>中間申告</label>
+        <select id="interimMode">
+          <option value="yotei" selected>予定申告（前期税額の1/2を納付）</option>
+          <option value="none">仮決算・中間申告なし</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="carryback" checked style="margin:0"> 赤字なら欠損金の繰戻し還付を受ける（青色申告）</label>
+      </div>
     </div>
     <div class="card">
       <h2>🎚️ 報酬設定</h2>
@@ -170,6 +196,15 @@
       <div class="detail-grid" id="details"></div>
     </div>
 
+    <div class="card" id="refundCard" hidden>
+      <h2>🔁 還付・確定時の納付</h2>
+      <div id="refundResult" style="font-size:0.75rem;"></div>
+      <p class="note" style="margin-top:6px">
+        ※ 繰戻し還付＝前期法人税×欠損金/前期所得（中小法人・前期も当期も青色申告・期限内申告が条件）。地方法人税は法人税還付額×10.3%。住民税・事業税は繰戻し還付がなく翌期以降へ繰越。<br>
+        ※ 中間納付は前期税額の1/2（前期法人税の1/2が10万以下なら不要）。還付加算金は考慮していません。
+      </p>
+    </div>
+
     <div class="opt-row">
       <div class="opt-box green" id="optimal"></div>
       <div class="opt-box purple" id="compare"></div>
@@ -214,7 +249,9 @@
     </div>
 
     <p class="note">
-      ※ 簡易計算。法人実効税率＝中小企業東京都概算。社保＝協会けんぽ東京2024ベース。賞与は事前確定届出給与前提。控除は基礎・給与所得・社保のみ。<br>
+      ※ 簡易計算。法人税等＝中小法人・東京都特別区（法人税15%/23.2%・地方法人税10.3%・法人税割7%・均等割7万・事業税＋特別法人事業税37%・防衛特別法人税）。事業税は支払年度の損金のため毎年同水準の定常状態を仮定。<br>
+      ※ 社保＝協会けんぽ東京 令和8年度（健保9.85%・介護1.62%・子ども子育て支援金0.23%・厚年18.3%）、標準報酬月額の等級表で計算。賞与は事前確定届出給与・年1回前提。<br>
+      ※ 個人＝令和7年度改正後（給与所得控除最低65万・基礎控除58万＋特例加算［令和7・8年分］）。住民税は東京23区単身（非課税45万・均等割5千・調整控除）。控除は基礎・給与所得・社保のみ。<br>
       ※ 「留保の将来取出コスト」は法人内部留保に対する追加税コスト推定。退職金で受取なら低め(10-15%)、報酬で受取なら高め(30-40%)。<br>
       ※ 退職金は法人の損金。配当は損金不算入（法人税削減効果なし）。報酬増額は翌期から。<br>
       ※ 消費税は簡易課税制度（みなし仕入率��で計算。課税売上5,000万円以下が適用条件。本則課税には非対応。
@@ -222,127 +259,20 @@
   </div>
 </div>
 
+<script src="sim.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const fmt = n => Math.round(n).toLocaleString();
 const fmtM = n => { const m = n/1e4; return Math.abs(m)>=100 ? Math.round(m).toLocaleString()+'万' : m.toFixed(1)+'万'; };
 
-function salDed(i) {
-  if(i<=1625000)return 550000; if(i<=1800000)return i*0.4-1e5;
-  if(i<=3600000)return i*0.3+8e4; if(i<=6600000)return i*0.2+44e4;
-  if(i<=8500000)return i*0.1+11e5; return 195e4;
-}
-function incTax(t) {
-  if(t<=0)return 0; if(t<=195e4)return t*0.05; if(t<=330e4)return t*0.10-97500;
-  if(t<=695e4)return t*0.20-427500; if(t<=900e4)return t*0.23-636e3;
-  if(t<=1800e4)return t*0.33-1536e3; if(t<=4000e4)return t*0.40-2796e3;
-  return t*0.45-4796e3;
-}
-function siCalc(mc,ab) {
-  const pm=Math.min(mc,65e4)*0.183, hm=Math.min(mc,139e4)*0.0998;
-  const mt=(pm+hm)*12;
-  const bp=Math.min(ab,150e4)*0.183, bh=Math.min(ab,573e4)*0.0998;
-  return { ee:(mt+bp+bh)/2, er:(mt+bp+bh)/2, total:mt+bp+bh };
-}
-function corpTax(i) {
-  if(i<=0)return 0; if(i<=400e4)return i*0.218;
-  if(i<=800e4)return 400e4*0.218+(i-400e4)*0.236;
-  return 400e4*0.218+400e4*0.236+(i-800e4)*0.337;
-}
-
-function sim(rv,ex,mc,bm,futPct,deemedRate,taxInclusive) {
-  const Rinput=rv*1e4;
-  const R=taxInclusive ? Math.round(Rinput/1.1) : Rinput;
-  const EX=ex*1e4, M=mc*1e4, AC=M*12, AB=bm*1e4, TI=AC+AB;
-  const s=siCalc(M,AB);
-  const ci=R-EX-TI-s.er;
-  const ct=corpTax(Math.max(0,ci));
-  const sd=salDed(TI), tp=Math.max(0,TI-sd-s.ee-48e4);
-  const it=incTax(tp), rt=tp*0.10, rc=it*0.021;
-  const ph=TI-s.ee-it-rc-rt;
-  const cr=Math.max(0,ci)-ct;
-  // 簡易課税の消費税
-  const consumptionTax = (deemedRate!=null && deemedRate>=0) ? R*0.10*(1-deemedRate/100) : 0;
-  // 今期の税+社保
-  const nowTax=ct+it+rc+rt+s.total+consumptionTax;
-  // 法人留保の将来取出コスト
-  const futCost=cr*(futPct/100);
-  // 実質トータル税コスト
-  const totalTax=nowTax+futCost;
-  const usable=R-totalTax;
-  // 実効税率
-  const corpEffRate = ci > 0 ? ct / ci : 0;
-  const personalTax = it + rc + rt + s.ee;
-  const personalEffRate = TI > 0 ? personalTax / TI : 0;
-  const totalEffRate = R > 0 ? totalTax / R : 0;
-  return { R,Rinput,EX,TI,AC,AB,ci,ct,sd,tp,it,rc,rt,see:s.ee,ser:s.er,st:s.total,ph,cr,nowTax,futCost,totalTax,usable,corpEffRate,personalTax,personalEffRate,totalEffRate,consumptionTax };
-}
-
-function findOpt(rv,ex,futPct,deemedRate,taxInclusive) {
-  let best={c:5,b:0,tax:Infinity};
-  for(let m=5;m<=200;m++) for(let b=0;b<=1000;b+=10) {
-    const r=sim(rv,ex,m,b,futPct,deemedRate,taxInclusive);
-    if(r.ci<-1e4) continue;
-    if(r.totalTax<best.tax) best={c:m,b,tax:r.totalTax};
-  }
-  return best;
-}
-function findOptBonus(rv,ex,mc,futPct,deemedRate,taxInclusive) {
-  let best={b:0,tax:Infinity};
-  for(let b=0;b<=1000;b+=10) {
-    const r=sim(rv,ex,mc,b,futPct,deemedRate,taxInclusive);
-    if(r.ci<-1e4) continue;
-    if(r.totalTax<best.tax) best={b,tax:r.totalTax};
-  }
-  return best;
-}
-
-// === 雇用形態の比較（同じ会社コストで） ===
-const NENKIN_ANNUAL = 203760; // 国民年金 定額(2024)
-function kokuho(totalIncome) { // 国保 簡易(東京23区2024概算・介護分なし)
-  const base = Math.max(0, totalIncome - 430000);
-  return Math.min(base * 0.104 + 64100, 890000);
-}
-function grossFromCost(cost) { // 会社コスト(額面+会社負担社保)から額面を逆算
-  let lo = 0, hi = cost;
-  for (let i = 0; i < 80; i++) {
-    const ag = (lo + hi) / 2;
-    const er = siCalc(ag / 12, 0).er;
-    if (ag + er > cost) hi = ag; else lo = ag;
-  }
-  return (lo + hi) / 2;
-}
-function simEmployee(cWan) { // 正社員
-  const C = cWan * 1e4;
-  const gross = grossFromCost(C);
-  const s = siCalc(gross / 12, 0);
-  const sd = salDed(gross);
-  const tp = Math.max(0, gross - sd - s.ee - 48e4);
-  const it = incTax(tp), rt = tp * 0.10, rc = it * 0.021;
-  const burden = it + rc + rt + s.total;
-  return { type:'employee', C, gross, ee:s.ee, er:s.er, si:s.total, sd, tp, it, rc, rt, burden, usable:C-burden, effRate:burden/C };
-}
-function simSoleProprietor(cWan, exWan) { // 個人事業主
-  const C = cWan * 1e4, EX = (exWan || 0) * 1e4;
-  const bizIncome = Math.max(0, C - EX);
-  const aoiro = 650000;
-  const afterAoiro = Math.max(0, bizIncome - aoiro);
-  const nenkin = NENKIN_ANNUAL, kokuhoIns = kokuho(afterAoiro);
-  const bizTax = Math.max(0, bizIncome - 2900000) * 0.05;
-  const tp = Math.max(0, afterAoiro - (nenkin + kokuhoIns) - 48e4);
-  const it = incTax(tp), rt = tp * 0.10, rc = it * 0.021;
-  const burden = it + rc + rt + nenkin + kokuhoIns + bizTax;
-  return { type:'sole', C, EX, bizIncome, aoiro, nenkin, kokuho:kokuhoIns, bizTax, tp, it, rc, rt, burden, usable:C-EX-burden, effRate:burden/C };
-}
-function simMicroCorp(cWan, exWan, futPct) { // マイクロ法人
-  const opt = findOpt(cWan, exWan, futPct, -1, false);
-  const r = sim(cWan, exWan, opt.c, opt.b, futPct, -1, false);
-  const C = r.R, EX = (exWan || 0) * 1e4;
-  const burden = r.ct + r.it + r.rc + r.rt + r.st + r.futCost;
-  return { type:'micro', C, EX, optComp:opt.c, optBonus:opt.b, ct:r.ct, st:r.st, it:r.it, rc:r.rc, rt:r.rt, cr:r.cr, futCost:r.futCost, ph:r.ph, burden, usable:C-EX-burden, effRate:burden/C };
-}
-function compareByCost(cWan, exWan, futPct) {
-  return { emp:simEmployee(cWan), sole:simSoleProprietor(cWan, exWan), micro:simMicroCorp(cWan, exWan, futPct) };
+function readOpts() {
+  return {
+    bizTaxReduced: $('bizTaxMode').value !== 'flat',
+    age40: $('age40').checked,
+    prevIncome: (parseFloat($('prevIncome').value) || 0) * 1e4,
+    interim: $('interimMode').value !== 'none',
+    carryback: $('carryback').checked,
+  };
 }
 
 function update() {
@@ -352,11 +282,12 @@ function update() {
   const futPct=parseInt($('futCost').value)||0;
   const deemedRate=parseInt($('deemedRate').value);
   const taxInclusive=$('taxInclusive').checked;
+  const opts=readOpts();
   $('compDisp').textContent=comp+'万';
   $('bonusDisp').textContent=bonus+'万';
   $('futDisp').textContent=futPct+'%';
 
-  const r=sim(rv,ex,comp,bonus,futPct,deemedRate,taxInclusive);
+  const r=sim(rv,ex,comp,bonus,futPct,deemedRate,taxInclusive,opts);
   const neg=r.ci<0;
   const taxRate=((r.totalTax/r.R)*100).toFixed(1);
 
@@ -400,6 +331,26 @@ function update() {
     <div class="detail-box"><div class="label">実質使えるお金</div><div class="value" style="color:var(--green)">${fmtM(r.usable)}</div></div>
   `;
 
+  const rf=r.refund;
+  const showRefund=rf.loss>0||rf.interim.total>0;
+  $('refundCard').hidden=!showRefund;
+  if(showRefund) {
+    const line=(l,v,c)=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${l}</span><span${c?` style="color:${c}"`:''}>${v}</span></div>`;
+    const net=rf.settle.refund-rf.settle.pay+rf.carryback.total;
+    $('refundResult').innerHTML=`
+      ${rf.loss>0?line('欠損金（赤字額）',fmt(rf.loss)+'円','var(--red)'):''}
+      ${rf.carryback.total>0?line('欠損金の繰戻し還付（法人税+地方法人税）',`${fmt(rf.carryback.houjin)} + ${fmt(rf.carryback.chihou)}`,'var(--green)'):''}
+      ${rf.loss>0&&rf.carryback.total===0&&$('carryback').checked?line('繰戻し還付','前期の課税所得を入力すると計算'):''}
+      ${rf.interim.total>0?line('中間納付（期中に納付済み）',fmt(rf.interim.total)+'円'):''}
+      ${line('確定税額',fmt(r.ct)+'円')}
+      ${rf.settle.refund>0?line('中間納付の還付',fmt(rf.settle.refund)+'円','var(--green)'):''}
+      ${rf.settle.pay>0?line('確定時の追加納付',fmt(rf.settle.pay)+'円','var(--red)'):''}
+      <div style="display:flex;justify-content:space-between;padding:4px 0;font-weight:700"><span>確定申告後に戻る/払う金額</span><span style="color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'還付 ':'納付 '}${fmt(Math.abs(net))}円</span></div>
+      ${rf.carryForward>0?line('翌期以降へ繰り越す欠損金（法人税・10年）',fmt(rf.carryForward)+'円'):''}
+      ${rf.loss>0?line('翌期以降へ繰り越す欠損金（事業税）',fmt(rf.loss)+'円'):''}
+    `;
+  }
+  const d=r.ctDetail;
   $('breakdown').innerHTML=`
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">総支給</span><span>${fmt(r.TI)}円</span></div>
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">給与所得控除</span><span>▲${fmt(r.sd)}</span></div>
@@ -408,7 +359,14 @@ function update() {
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">所得税+復興</span><span style="color:var(--red)">${fmt(Math.round(r.it+r.rc))}</span></div>
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">住民税</span><span style="color:var(--red)">${fmt(Math.round(r.rt))}</span></div>
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border);margin-top:6px"><span style="color:var(--muted)">法人所得</span><span${neg?' style="color:var(--red)"':''}>${fmt(Math.round(r.ci))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">課税所得（事業税控除後）</span><span>${fmt(r.ctDetail.taxable)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">法人税等</span><span style="color:var(--red)">${fmt(Math.round(r.ct))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0 2px 8px;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">法人税</span><span>${fmt(d.houjin)}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0 2px 8px;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">地方法人税</span><span>${fmt(d.chihou)}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0 2px 8px;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">法人住民税（割+均等割）</span><span>${fmt(d.juminWari)} + ${fmt(d.kintou)}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0 2px 8px;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">事業税+特別法人事業税</span><span>${fmt(d.jigyo)} + ${fmt(d.tokubetsu)}</span></div>
+    ${d.defense>0?`<div style="display:flex;justify-content:space-between;padding:2px 0 2px 8px;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">防衛特別法人税</span><span>${fmt(d.defense)}</span></div>`:''}
+    ${r.refund.carryback.total>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">欠損金の繰戻し還付</span><span style="color:var(--green)">+${fmt(r.refund.carryback.total)}</span></div>`:''}
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">社保(会社)</span><span style="color:var(--red)">${fmt(Math.round(r.ser))}</span></div>
     ${r.consumptionTax>0?`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">消費税(簡易課税)</span><span style="color:var(--red)">${fmt(Math.round(r.consumptionTax))}</span></div>`:''}
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border);margin-top:6px"><span style="color:var(--accent)">個人実効税率</span><span style="color:var(--accent)">${(r.personalEffRate*100).toFixed(1)}%</span></div>
@@ -416,12 +374,12 @@ function update() {
     <div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--yellow);font-weight:700">トータル税負担率</span><span style="color:var(--yellow);font-weight:700">${(r.totalEffRate*100).toFixed(1)}%</span></div>
   `;
 
-  const opt=findOpt(rv,ex,futPct,deemedRate,taxInclusive);
-  const optR=sim(rv,ex,opt.c,opt.b,futPct,deemedRate,taxInclusive);
+  const opt=findOpt(rv,ex,futPct,deemedRate,taxInclusive,opts);
+  const optR=sim(rv,ex,opt.c,opt.b,futPct,deemedRate,taxInclusive,opts);
   const diff=r.totalTax-optR.totalTax;
 
-  const optB=findOptBonus(rv,ex,comp,futPct,deemedRate,taxInclusive);
-  const optBR=sim(rv,ex,comp,optB.b,futPct,deemedRate,taxInclusive);
+  const optB=findOptBonus(rv,ex,comp,futPct,deemedRate,taxInclusive,opts);
+  const optBR=sim(rv,ex,comp,optB.b,futPct,deemedRate,taxInclusive,opts);
   const diffB=r.totalTax-optBR.totalTax;
 
   $('optimal').innerHTML=`
@@ -439,7 +397,7 @@ function update() {
 
   const tcm=comp*12+bonus, nbm=Math.round(tcm/12);
   if(bonus>0&&nbm>=5&&nbm<=200) {
-    const rNB=sim(rv,ex,nbm,0,futPct,deemedRate,taxInclusive);
+    const rNB=sim(rv,ex,nbm,0,futPct,deemedRate,taxInclusive,opts);
     const sDiffTax=r.totalTax-rNB.totalTax; // positive = current(賞与あり) is cheaper
     const label=sDiffTax<0?'賞与ありが有利':'月額のみが有利';
     const saving=Math.abs(sDiffTax);
@@ -512,11 +470,11 @@ function salaryExtractTax(amount, currentMonthly) {
   const sOld = siCalc(currentMonthly * 1e4, 0);
   const siDiff = sNew.total - sOld.total;
 
-  const sdNew = salDed(newAnnual), tpNew = Math.max(0, newAnnual - sdNew - sNew.ee - 48e4);
-  const sdOld = salDed(oldAnnual), tpOld = Math.max(0, oldAnnual - sdOld - sOld.ee - 48e4);
-  const itDiff = incTax(tpNew) - incTax(tpOld);
-  const rtDiff = (tpNew - tpOld) * 0.10;
-  const rcDiff = itDiff * 0.021;
+  const pNew = personalTaxes(newAnnual - salDed(newAnnual), sNew.ee);
+  const pOld = personalTaxes(oldAnnual - salDed(oldAnnual), sOld.ee);
+  const itDiff = pNew.it - pOld.it;
+  const rtDiff = pNew.rt - pOld.rt;
+  const rcDiff = pNew.rc - pOld.rc;
 
   const tax = itDiff + rcDiff + rtDiff + siDiff;
   return { tax, rate: amount > 0 ? (tax/amount*100).toFixed(1) : '0.0', siDiff };
@@ -535,8 +493,7 @@ function updateExtract() {
   // 個人の既存課税所得（配当計算用）
   const currentAnnual = comp * 1e4 * 12;
   const sC = siCalc(comp * 1e4, 0);
-  const sdC = salDed(currentAnnual);
-  const existingTaxable = Math.max(0, currentAnnual - sdC - sC.ee - 48e4);
+  const existingTaxable = personalTaxes(currentAnnual - salDed(currentAnnual), sC.ee).tp;
 
   const ret = retirementTax(retained, years);
   const div = dividendTax(retained, existingTaxable);
@@ -575,7 +532,7 @@ function updateCompare() {
     $('cmpResult').innerHTML = '<div style="grid-column:1/-1;font-size:0.7rem;color:var(--muted)">会社の総コストを入力してください</div>';
     return;
   }
-  const c = compareByCost(C, ex, futPct);
+  const c = compareByCost(C, ex, futPct, readOpts());
   const cols = [
     { name:'正社員', r:c.emp, note:`額面 ${fmtM(c.emp.gross)}`, rows:[
       ['社保(労使合計)', c.emp.si],
@@ -610,6 +567,8 @@ function updateCompare() {
 
 ['revenue','expenses','comp','bonus','futCost'].forEach(id=>$(id).addEventListener('input',update));
 $('deemedRate').addEventListener('change',update);
+['bizTaxMode','age40','interimMode','carryback'].forEach(id=>$(id).addEventListener('change',()=>{update();updateCompare();}));
+$('prevIncome').addEventListener('input',update);
 $('taxInclusive').addEventListener('change',()=>{
   $('revenueLabel').textContent=$('taxInclusive').checked?'年間売上（税込・万円）':'年間売上（税抜・万円）';
   update();

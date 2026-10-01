@@ -10,6 +10,18 @@ import {
   simSoleProprietor,
   simMicroCorp,
   compareByCost,
+  corpTax,
+  corpTaxDetail,
+  corpTaxFromProfit,
+  salDed,
+  basicDedIT,
+  basicDedRT,
+  residentTax,
+  personalTaxes,
+  standardMonthly,
+  pensionStandard,
+  interimPayment,
+  carrybackRefund,
 } from "./sim.js";
 
 describe("sim effective tax rates", () => {
@@ -160,6 +172,15 @@ describe("grossFromCost（会社コストから額面を逆算）", () => {
 
   test("額面は会社コスト未満（会社負担社保がある分だけ小さい）", () => {
     expect(grossFromCost(8_000_000)).toBeLessThan(8_000_000);
+  });
+
+  test("標準報酬の等級の段差があっても会社コストを超えない", () => {
+    for (let cost = 1_000_000; cost <= 20_000_000; cost += 70_000) {
+      const gross = grossFromCost(cost);
+      const er = siCalc(gross / 12, 0).er;
+      expect(gross + er).toBeLessThanOrEqual(cost + 1e-6);
+      expect(cost - (gross + er)).toBeLessThan(60_000); // 1等級分の段差以内
+    }
   });
 
   test("コスト0なら額面0", () => {
@@ -327,5 +348,371 @@ describe("tax inclusive mode (税込売上)", () => {
     expect(r1.R).toBe(r2.R);
     expect(r1.ci).toBe(r2.ci);
     expect(r1.totalTax).toBe(r2.totalTax);
+  });
+});
+
+// ============================================================
+// 法人税等の内訳（中小法人・東京都特別区）
+//   実申告書（令和7.9.1〜令和8.8.31、所得6,949,034円、事業税は軽減税率不適用）を再現できること
+// ============================================================
+
+describe("corpTaxDetail（課税所得から法人税等の内訳）", () => {
+  test("実申告書を再現（軽減税率不適用＝事業税7.0%一律）", () => {
+    const d = corpTaxDetail(6_949_034, { bizTaxReduced: false });
+    expect(d.houjin).toBe(1_042_300);      // 法人税 15%（百円未満切捨）
+    expect(d.chihou).toBe(107_300);        // 地方法人税 10.3%
+    expect(d.juminWari).toBe(72_900);      // 法人都民税 法人税割 7.0%
+    expect(d.kintou).toBe(70_000);         // 均等割
+    expect(d.jigyo).toBe(486_400);         // 事業税 所得割
+    expect(d.tokubetsu).toBe(179_900);     // 特別法人事業税 37%
+    expect(d.defense).toBe(0);
+    expect(d.total).toBe(1_958_800);
+  });
+
+  test("軽減税率（デフォルト）なら事業税は段階税率 3.5% / 5.3%", () => {
+    const d = corpTaxDetail(6_949_034);
+    // 400万×3.5% + 294.9万×5.3% = 140,000 + 156,297 → 296,200
+    expect(d.jigyo).toBe(296_200);
+    expect(d.tokubetsu).toBe(109_500); // 296,200×37% = 109,594 → 109,500
+    expect(d.houjin).toBe(1_042_300);
+  });
+
+  test("所得0でも均等割7万はかかる", () => {
+    const d = corpTaxDetail(0);
+    expect(d.total).toBe(70_000);
+    expect(d.kintou).toBe(70_000);
+  });
+
+  test("マイナス所得は0扱い（均等割のみ）", () => {
+    expect(corpTaxDetail(-1_000_000).total).toBe(70_000);
+  });
+
+  test("800万超の部分は法人税23.2%", () => {
+    const d = corpTaxDetail(10_000_000);
+    expect(d.houjin).toBe(1_200_000 + 464_000);
+  });
+
+  test("防衛特別法人税 = (法人税額 − 500万) × 4%", () => {
+    const d = corpTaxDetail(40_000_000);
+    // 法人税 = 1,200,000 + 3,200万×23.2% = 8,624,000
+    expect(d.houjin).toBe(8_624_000);
+    expect(d.defense).toBe(144_900); // (8,624,000−5,000,000)×4% = 144,960 → 144,900
+  });
+
+  test("均等割はオプションで変更できる", () => {
+    expect(corpTaxDetail(0, { kintou: 180_000 }).total).toBe(180_000);
+  });
+});
+
+describe("corpTaxFromProfit（税引前利益から定常状態の法人税等）", () => {
+  test("事業税は損金：課税所得 + 事業税等 ≒ 税引前利益", () => {
+    const d = corpTaxFromProfit(7_348_000);
+    expect(d.taxable + d.jigyo + d.tokubetsu).toBeLessThanOrEqual(7_348_000);
+    expect(7_348_000 - (d.taxable + d.jigyo + d.tokubetsu)).toBeLessThan(2_000);
+  });
+
+  test("課税所得は税引前利益より事業税分だけ小さい", () => {
+    const d = corpTaxFromProfit(7_348_000);
+    expect(d.taxable).toBeLessThan(7_348_000);
+  });
+
+  test("赤字なら均等割のみ", () => {
+    const d = corpTaxFromProfit(-500_000);
+    expect(d.taxable).toBe(0);
+    expect(d.total).toBe(70_000);
+  });
+
+  test("corpTax は total を返す", () => {
+    expect(corpTax(7_348_000)).toBe(corpTaxFromProfit(7_348_000).total);
+  });
+});
+
+describe("sim の法人税等（内訳と均等割・事業税切替）", () => {
+  test("ct は内訳の合計", () => {
+    const r = sim(1276.2, 369.3, 14.6, 0, 20, -1, false);
+    expect(r.ct).toBe(r.ctDetail.total);
+  });
+
+  test("赤字でも均等割が totalTax に入る", () => {
+    const r = sim(2000, 600, 200, 0, 20, -1);
+    expect(r.ci).toBeLessThan(0);
+    expect(r.ct).toBe(70_000);
+  });
+
+  test("軽減税率不適用にすると法人税等が増える", () => {
+    const a = sim(1276.2, 369.3, 14.6, 0, 20, -1, false);
+    const b = sim(1276.2, 369.3, 14.6, 0, 20, -1, false, { bizTaxReduced: false });
+    expect(b.ct).toBeGreaterThan(a.ct);
+  });
+
+  test("留保が赤字のとき将来取出コストはマイナスにならない", () => {
+    const r = sim(2000, 600, 200, 0, 20, -1);
+    expect(r.futCost).toBe(0);
+  });
+});
+
+// ============================================================
+// 個人課税（令和7年度改正後・令和7〜8年分）
+// ============================================================
+
+describe("salDed（給与所得控除・最低65万）", () => {
+  test("190万以下は65万", () => {
+    expect(salDed(1_000_000)).toBe(650_000);
+    expect(salDed(1_752_000)).toBe(650_000);
+    expect(salDed(1_900_000)).toBe(650_000);
+  });
+  test("190万超は従来どおり", () => {
+    expect(salDed(3_000_000)).toBe(980_000);
+    expect(salDed(10_000_000)).toBe(1_950_000);
+  });
+  test("収入が控除額未満でも給与所得はマイナスにならない（呼び出し側で確認）", () => {
+    expect(Math.max(0, 500_000 - salDed(500_000))).toBe(0);
+  });
+});
+
+describe("basicDedIT（所得税の基礎控除・令和7〜8年分）", () => {
+  test.each([
+    [0, 950_000],
+    [1_320_000, 950_000],
+    [1_320_001, 880_000],
+    [3_360_000, 880_000],
+    [3_360_001, 680_000],
+    [4_890_001, 630_000],
+    [6_550_001, 580_000],
+    [23_500_000, 580_000],
+    [23_500_001, 480_000],
+    [24_000_001, 320_000],
+    [24_500_001, 160_000],
+    [25_000_001, 0],
+  ])("合計所得 %d → %d", (inc, ded) => {
+    expect(basicDedIT(inc)).toBe(ded);
+  });
+});
+
+describe("basicDedRT（住民税の基礎控除）", () => {
+  test.each([
+    [0, 430_000],
+    [24_000_000, 430_000],
+    [24_000_001, 290_000],
+    [24_500_001, 150_000],
+    [25_000_001, 0],
+  ])("合計所得 %d → %d", (inc, ded) => {
+    expect(basicDedRT(inc)).toBe(ded);
+  });
+});
+
+describe("residentTax（住民税）", () => {
+  test("合計所得45万以下は非課税（均等割も0）", () => {
+    expect(residentTax(450_000, 0).total).toBe(0);
+  });
+  test("非課税ラインの境界（45万超で課税）", () => {
+    expect(residentTax(450_001, 0).perCapita).toBe(5_000);
+  });
+  test("社保控除で課税所得がマイナスにならない", () => {
+    const r = residentTax(500_000, 1_000_000);
+    expect(r.incomeLevy).toBe(0);
+    expect(r.total).toBe(5_000);
+  });
+  test("課税なら均等割5,000が乗る", () => {
+    const r = residentTax(1_000_000, 0);
+    expect(r.perCapita).toBe(5_000);
+  });
+  test("課税所得200万以下の調整控除 = min(5万, 課税所得)×5%", () => {
+    // 合計所得 1,000,000 − 基礎43万 = 570,000 → 所得割 57,000 − 2,500
+    const r = residentTax(1_000_000, 0);
+    expect(r.incomeLevy).toBeCloseTo(57_000 - 2_500, 5);
+  });
+  test("課税所得200万超でも調整控除は最低2,500", () => {
+    const r = residentTax(10_000_000, 0);
+    expect(r.incomeLevy).toBeCloseTo((10_000_000 - 430_000) * 0.1 - 2_500, 5);
+  });
+});
+
+describe("personalTaxes（給与所得者の所得税・住民税）", () => {
+  test("実申告の役員報酬（月14.6万×12）は所得税0", () => {
+    const s = siCalc(146_000, 0);
+    const p = personalTaxes(1_752_000 - salDed(1_752_000), s.ee);
+    expect(p.it).toBe(0);
+    expect(p.rc).toBe(0);
+  });
+  test("マイナス所得は0扱い", () => {
+    const p = personalTaxes(-100_000, 0);
+    expect(p.it).toBe(0);
+    expect(p.rt).toBe(0);
+  });
+  test("sim の個人税は personalTaxes と一致", () => {
+    const r = sim(2000, 600, 50, 0, 20);
+    const p = personalTaxes(r.TI - r.sd, r.see);
+    expect(r.it).toBeCloseTo(p.it, 5);
+    expect(r.rt).toBeCloseTo(p.rt, 5);
+  });
+});
+
+// ============================================================
+// 社会保険（協会けんぽ東京 令和8年度・等級表）
+// ============================================================
+
+describe("standardMonthly（標準報酬月額）", () => {
+  test.each([
+    [62_999, 58_000],
+    [63_000, 68_000],
+    [146_000, 150_000],
+    [154_999, 150_000],
+    [155_000, 160_000],
+    [500_000, 500_000],
+    [1_354_999, 1_330_000],
+    [2_000_000, 1_390_000],
+  ])("報酬 %d → 標準報酬 %d", (m, s) => {
+    expect(standardMonthly(m)).toBe(s);
+  });
+  test("厚生年金は 88,000〜650,000 にクランプ", () => {
+    expect(pensionStandard(50_000)).toBe(88_000);
+    expect(pensionStandard(700_000)).toBe(650_000);
+    expect(pensionStandard(146_000)).toBe(150_000);
+  });
+});
+
+describe("siCalc（等級・最新料率・介護・子ども子育て支援金）", () => {
+  test("月14.6万（40歳未満）: 標準15万 ×(18.3%+9.85%+0.23%)×12", () => {
+    const s = siCalc(146_000, 0);
+    expect(s.total).toBeCloseTo(150_000 * (0.183 + 0.0985 + 0.0023) * 12, 5);
+    expect(s.ee).toBeCloseTo(s.total / 2, 5);
+  });
+  test("40〜64歳は介護保険1.62%が加算", () => {
+    const a = siCalc(146_000, 0);
+    const b = siCalc(146_000, 0, { age40: true });
+    expect(b.total - a.total).toBeCloseTo(150_000 * 0.0162 * 12, 5);
+  });
+  test("賞与は千円未満切捨、年金は150万・健保は573万が上限", () => {
+    const s0 = siCalc(146_000, 0);
+    const s1 = siCalc(146_000, 1_000_500);
+    expect(s1.total - s0.total).toBeCloseTo(1_000_000 * (0.183 + 0.0985 + 0.0023), 5);
+    const s2 = siCalc(146_000, 10_000_000);
+    expect(s2.total - s0.total).toBeCloseTo(1_500_000 * 0.183 + 5_730_000 * (0.0985 + 0.0023), 5);
+  });
+  test("報酬0なら社保0（未加入）", () => {
+    expect(siCalc(0, 0).total).toBe(0);
+  });
+});
+
+// ============================================================
+// 赤字のときの還付（中間納付の還付・欠損金の繰戻し還付・繰越欠損金）
+//   前期 = 実申告（所得 6,949,034円・事業税は軽減税率不適用）
+// ============================================================
+
+const PREV = 6_949_034;
+const FLAT = { bizTaxReduced: false };
+
+describe("interimPayment（予定申告の中間納付額＝前期の1/2）", () => {
+  test("前期実績から各税目の1/2（百円未満切捨）", () => {
+    const i = interimPayment(PREV, FLAT);
+    expect(i.required).toBe(true);
+    expect(i.houjin).toBe(521_100);   // 1,042,300 / 2
+    expect(i.chihou).toBe(53_600);    // 107,300 / 2
+    expect(i.juminWari).toBe(36_400); // 72,900 / 2
+    expect(i.kintou).toBe(35_000);    // 70,000 / 2
+    expect(i.jigyo).toBe(243_200);    // 486,400 / 2
+    expect(i.tokubetsu).toBe(89_900); // 179,900 / 2
+    expect(i.total).toBe(979_200);
+  });
+
+  test("前期法人税の1/2が10万以下なら中間申告不要", () => {
+    const i = interimPayment(1_000_000); // 法人税150,000 → 1/2 = 75,000
+    expect(i.required).toBe(false);
+    expect(i.total).toBe(0);
+  });
+
+  test("前期が赤字・0なら中間納付なし", () => {
+    expect(interimPayment(0).total).toBe(0);
+    expect(interimPayment(-1_000_000).total).toBe(0);
+  });
+});
+
+describe("carrybackRefund（欠損金の繰戻し還付）", () => {
+  test("前期法人税 × 欠損金 / 前期所得", () => {
+    const c = carrybackRefund(3_000_000, PREV, FLAT);
+    // 1,042,300 × 3,000,000 / 6,949,034 = 449,976.2
+    expect(c.houjin).toBe(449_976);
+    expect(c.chihou).toBe(46_347); // 449,976 × 10.3% = 46,347.5
+    expect(c.total).toBe(449_976 + 46_347);
+    expect(c.used).toBe(3_000_000);
+  });
+
+  test("欠損金が前期所得を超える分は還付されない（前期納付額が上限）", () => {
+    const c = carrybackRefund(10_000_000, PREV, FLAT);
+    expect(c.houjin).toBe(1_042_300);
+    expect(c.chihou).toBe(107_300); // 前期の地方法人税が上限
+    expect(c.used).toBe(PREV);
+  });
+
+  test("欠損金0なら還付0", () => {
+    expect(carrybackRefund(0, PREV).total).toBe(0);
+  });
+
+  test("前期所得が0なら還付0", () => {
+    expect(carrybackRefund(3_000_000, 0).total).toBe(0);
+  });
+});
+
+describe("sim の還付（opts.prevIncome）", () => {
+  // 経費を増やして赤字にする: 売上1000万・経費1100万・月15万
+  const lossArgs = [1000, 1100, 15, 0, 20, -1, false];
+
+  test("前期情報がなければ還付なし（後方互換）", () => {
+    const r = sim(...lossArgs);
+    expect(r.refund.carryback.total).toBe(0);
+    expect(r.refund.interim.total).toBe(0);
+  });
+
+  test("赤字なら欠損金 = −税引前利益", () => {
+    const r = sim(...lossArgs, { ...FLAT, prevIncome: PREV });
+    expect(r.ci).toBeLessThan(0);
+    expect(r.refund.loss).toBe(-r.ci);
+  });
+
+  test("繰戻し還付の分だけ totalTax が減る", () => {
+    const base = sim(...lossArgs, FLAT);
+    const r = sim(...lossArgs, { ...FLAT, prevIncome: PREV });
+    expect(r.refund.carryback.total).toBeGreaterThan(0);
+    expect(r.totalTax).toBeCloseTo(base.totalTax - r.refund.carryback.total, 5);
+    expect(r.usable).toBeCloseTo(base.usable + r.refund.carryback.total, 5);
+  });
+
+  test("繰戻しを使わなければ全額が繰越欠損金", () => {
+    const r = sim(...lossArgs, { ...FLAT, prevIncome: PREV, carryback: false });
+    expect(r.refund.carryback.total).toBe(0);
+    expect(r.refund.carryForward).toBe(r.refund.loss);
+  });
+
+  test("繰戻しに使った分は繰越欠損金から減る", () => {
+    const r = sim(...lossArgs, { ...FLAT, prevIncome: PREV });
+    expect(r.refund.carryForward).toBe(r.refund.loss - r.refund.carryback.used);
+  });
+
+  test("赤字なら中間納付は均等割以外すべて還付、均等割は残り半分を納付", () => {
+    const r = sim(...lossArgs, { ...FLAT, prevIncome: PREV });
+    expect(r.refund.settle.refund).toBe(979_200 - 35_000);
+    expect(r.refund.settle.pay).toBe(35_000);
+  });
+
+  test("中間申告しない（仮決算・ゼロ）なら中間納付の還付なし", () => {
+    const r = sim(...lossArgs, { ...FLAT, prevIncome: PREV, interim: false });
+    expect(r.refund.interim.total).toBe(0);
+    expect(r.refund.settle.refund).toBe(0);
+    expect(r.refund.settle.pay).toBe(r.ct);
+  });
+
+  test("黒字なら繰戻し還付なし・確定納付 = 確定税額 − 中間納付", () => {
+    const r = sim(2000, 600, 50, 0, 20, -1, false, { ...FLAT, prevIncome: PREV });
+    expect(r.ci).toBeGreaterThan(0);
+    expect(r.refund.loss).toBe(0);
+    expect(r.refund.carryback.total).toBe(0);
+    expect(r.refund.settle.pay - r.refund.settle.refund).toBe(r.ct - r.refund.interim.total);
+  });
+
+  test("中間納付は時期のずれだけなので totalTax に影響しない", () => {
+    const a = sim(2000, 600, 50, 0, 20, -1, false, FLAT);
+    const b = sim(2000, 600, 50, 0, 20, -1, false, { ...FLAT, prevIncome: PREV, carryback: false });
+    expect(b.totalTax).toBeCloseTo(a.totalTax, 5);
   });
 });
